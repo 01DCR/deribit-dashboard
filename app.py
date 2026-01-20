@@ -4,7 +4,7 @@ import plotly.express as px
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Deribit P&L Tracker", layout="wide")
-st.title("📈 Options Trading P&L Dashboard (Daily Close)")
+st.title("📈 Options Trading P&L Dashboard")
 
 # --- SIDEBAR: UPLOAD ---
 st.sidebar.header("Data Upload")
@@ -42,18 +42,28 @@ if uploaded_file is not None:
         df['Fees'] = df['Fee Charged']
         df['Net P&L'] = df['Gross P&L'] - df['Fees']
 
-        # 6. GROUP BY DAY (The Fix for "Last Value of the Day")
-        # Instead of cumsum on every trade, we sum the day's results first.
+        # 6. GROUP BY DAY (For Chart & Daily Ledger)
         daily_ledger = df.groupby('Day')[['Gross P&L', 'Fees', 'Net P&L']].sum()
         
-        # Calculate Cumulative Results based on DAILY totals
+        # Calculate Cumulative Results
         daily_ledger['Cumulative Net'] = daily_ledger['Net P&L'].cumsum()
         daily_ledger['Cumulative Gross'] = daily_ledger['Gross P&L'].cumsum()
         
-        # Add USD Estimates to the Daily Ledger
+        # Add USD Estimates to Daily
         daily_ledger['Net ($)'] = daily_ledger['Net P&L'] * last_price
         daily_ledger['Fees ($)'] = daily_ledger['Fees'] * last_price
         daily_ledger['Gross ($)'] = daily_ledger['Gross P&L'] * last_price
+
+        # 7. GROUP BY MONTH (For Monthly Table)
+        monthly_stats = df.set_index('datetime').resample('M')[['Gross P&L', 'Fees', 'Net P&L']].sum()
+        
+        # Add USD Estimates to Monthly
+        monthly_stats['Net ($)'] = monthly_stats['Net P&L'] * last_price
+        monthly_stats['Fees ($)'] = monthly_stats['Fees'] * last_price
+        monthly_stats['Gross ($)'] = monthly_stats['Gross P&L'] * last_price
+        
+        # Format Index to readable Month Name
+        monthly_stats.index = monthly_stats.index.strftime('%B %Y')
 
         # --- DASHBOARD STATS ---
         
@@ -77,38 +87,44 @@ if uploaded_file is not None:
         
         st.divider()
 
-        # 2. EQUITY CURVE (Daily Close)
+        # 2. EQUITY CURVE
         st.subheader("Account Growth (Daily Close)")
-        
-        # Prepare data for plotting
-        # We reset index so 'Day' becomes a column we can plot
         plot_data = daily_ledger.reset_index()
         plot_data = plot_data[['Day', 'Cumulative Net', 'Cumulative Gross']].melt('Day', var_name='Type', value_name='P&L')
         
         fig_equity = px.line(plot_data, x='Day', y='P&L', color='Type',
                              template='plotly_dark',
-                             title='Cumulative P&L (End of Day Value)',
                              color_discrete_map={"Cumulative Net": "#00CC96", "Cumulative Gross": "#FFA15A"})
-        
-        # Add markers so you can see the specific daily close points
         fig_equity.update_traces(mode="lines+markers", line_width=2)
         fig_equity.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.3)
         st.plotly_chart(fig_equity, use_container_width=True)
 
-        # 3. DAILY BREAKDOWN TABLE
-        st.subheader("📝 Daily Ledger")
+        # 3. TABLES SECTION
+        col_month, col_day = st.columns([1, 2])
         
-        # Format the dataframe for display
-        # We sort descending so the most recent day is at the top
-        display_table = daily_ledger.sort_index(ascending=False).copy()
-        
-        st.dataframe(
-            display_table.style
-            .format("{:,.4f}", subset=['Gross P&L', 'Fees', 'Net P&L'])
-            .format("${:,.2f}", subset=['Gross ($)', 'Fees ($)', 'Net ($)'])
-            .background_gradient(subset=['Net P&L'], cmap='RdYlGn'),
-            use_container_width=True
-        )
+        with col_month:
+            st.subheader("🗓️ Monthly Breakdown")
+            # Sort descending (newest month first)
+            display_month = monthly_stats.sort_index(ascending=False)
+            st.dataframe(
+                display_month.style
+                .format("{:,.4f}", subset=['Net P&L'])
+                .format("${:,.2f}", subset=['Net ($)'])
+                .background_gradient(subset=['Net P&L'], cmap='RdYlGn'),
+                use_container_width=True
+            )
+
+        with col_day:
+            st.subheader("📝 Daily Ledger")
+            # Sort descending (newest day first)
+            display_day = daily_ledger.sort_index(ascending=False)
+            st.dataframe(
+                display_day.style
+                .format("{:,.4f}", subset=['Gross P&L', 'Fees', 'Net P&L'])
+                .format("${:,.2f}", subset=['Net ($)'])
+                .background_gradient(subset=['Net P&L'], cmap='RdYlGn'),
+                use_container_width=True
+            )
 
     except Exception as e:
         st.error(f"Error processing file: {e}")
